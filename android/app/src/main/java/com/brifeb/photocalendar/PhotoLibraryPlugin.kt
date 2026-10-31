@@ -46,7 +46,7 @@ class PhotoLibraryPlugin : Plugin() {
     private fun resolveAccess(call: PluginCall) {
         val result = JSObject()
         result.put("granted", hasAnyReadPermission())
-        result.put("limited", Build.VERSION.SDK_INT >= 34 && hasPermission(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED) && !hasPermission(Manifest.permission.READ_MEDIA_IMAGES))
+        result.put("limited", Build.VERSION.SDK_INT >= 34 && hasReadPermission(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED) && !hasReadPermission(Manifest.permission.READ_MEDIA_IMAGES))
         call.resolve(result)
     }
 
@@ -99,6 +99,6 @@ class PhotoLibraryPlugin : Plugin() {
     }
 
     private fun parseDate(value: String): Long = try { SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(value)?.time ?: 0L } catch (_: Exception) { 0L }
-    private fun hasPermission(permission: String) = androidx.core.content.ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
-    private fun hasAnyReadPermission() = if (Build.VERSION.SDK_INT >= 33) hasPermission(Manifest.permission.READ_MEDIA_IMAGES) || (Build.VERSION.SDK_INT >= 34 && hasPermission(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)) else hasPermission(Manifest.permission.READ_EXTERNAL_STORAGE)
+    private fun hasReadPermission(permission: String) = androidx.core.content.ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+    private fun hasAnyReadPermission() = if (Build.VERSION.SDK_INT >= 33) hasReadPermission(Manifest.permission.READ_MEDIA_IMAGES) || (Build.VERSION.SDK_INT >= 34 && hasReadPermission(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)) else hasReadPermission(Manifest.permission.READ_EXTERNAL_STORAGE)
 }

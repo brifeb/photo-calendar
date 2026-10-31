@@ -4,8 +4,11 @@ import android.Manifest
 import android.content.ContentUris
 import android.content.pm.PackageManager
 import android.database.Cursor
+import android.graphics.Bitmap
 import android.os.Build
 import android.provider.MediaStore
+import android.util.Base64
+import android.util.Size
 import androidx.exifinterface.media.ExifInterface
 import com.getcapacitor.JSArray
 import com.getcapacitor.JSObject
@@ -15,6 +18,7 @@ import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
 import com.getcapacitor.annotation.Permission
 import java.text.SimpleDateFormat
+import java.io.ByteArrayOutputStream
 import java.util.Date
 import java.util.Locale
 
@@ -94,8 +98,21 @@ class PhotoLibraryPlugin : Plugin() {
     private fun cursorToPhoto(cursor: Cursor, collection: android.net.Uri): JSObject {
         val id = cursor.getLong(0)
         val takenAt = cursor.getLong(2)
+        val uri = ContentUris.withAppendedId(collection, id)
         val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(takenAt))
-        return JSObject().put("id", id.toString()).put("uri", ContentUris.withAppendedId(collection, id).toString()).put("name", cursor.getString(1)).put("date", date).put("width", cursor.getInt(3)).put("height", cursor.getInt(4)).put("size", "${cursor.getLong(5) / 1_000_000} MB")
+        return JSObject().put("id", id.toString()).put("uri", thumbnailData(uri)).put("name", cursor.getString(1)).put("date", date).put("width", cursor.getInt(3)).put("height", cursor.getInt(4)).put("size", "${cursor.getLong(5) / 1_000_000} MB")
+    }
+
+    private fun thumbnailData(uri: android.net.Uri): String {
+        return try {
+            val bitmap: Bitmap = if (Build.VERSION.SDK_INT >= 29) context.contentResolver.loadThumbnail(uri, Size(480, 480), null) else android.graphics.BitmapFactory.decodeStream(context.contentResolver.openInputStream(uri)) ?: throw IllegalStateException("Unable to decode thumbnail")
+            val output = ByteArrayOutputStream()
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 78, output)
+            bitmap.recycle()
+            "data:image/jpeg;base64,${Base64.encodeToString(output.toByteArray(), Base64.NO_WRAP)}"
+        } catch (_: Exception) {
+            ""
+        }
     }
 
     private fun parseDate(value: String): Long = try { SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(value)?.time ?: 0L } catch (_: Exception) { 0L }

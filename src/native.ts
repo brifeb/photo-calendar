@@ -1,4 +1,5 @@
 import { registerPlugin } from '@capacitor/core'
+import { Capacitor } from '@capacitor/core'
 import type { Photo } from './types'
 
 export interface PhotoLibraryPlugin {
@@ -8,3 +9,4 @@ export interface PhotoLibraryPlugin {
 }
 
 export const PhotoLibrary = registerPlugin<PhotoLibraryPlugin>('PhotoLibrary')
+export const isNative = Capacitor.isNativePlatform()

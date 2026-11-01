@@ -1,0 +1,35 @@
+name: Expo Android Debug APK
+
+on:
+  push:
+    branches: [expo-migration]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: expo
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: expo/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npx expo prebuild --platform android --non-interactive
+      - name: Build debug APK
+        working-directory: expo/android
+        run: ./gradlew assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: photo-calendar-expo-debug-apk
+          path: expo/android/app/build/outputs/apk/debug/app-debug.apk

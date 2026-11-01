@@ -28,8 +28,8 @@ function App() {
   useEffect(() => {
     if (!isNative) return
     const today = new Date()
-    const start = new Date(today.getFullYear(), today.getMonth() - 3, 1)
-    const end = new Date(today.getFullYear(), today.getMonth() + 8, 0)
+    const start = new Date(today.getFullYear(), today.getMonth() - 12, 1)
+    const end = new Date(today.getFullYear(), today.getMonth() + 1, 0)
     PhotoLibrary.requestAccess()
       .then(access => access.granted ? PhotoLibrary.listPhotos({ startDate: isoDate(start), endDate: isoDate(end), limit: 500 }) : Promise.reject(new Error('permission-denied')))
       .then(result => { setPhotos(result.photos.map(photo => ({ ...photo, uri: toWebUri(photo.uri) }))); setLibraryState('ready') })
@@ -52,7 +52,13 @@ function App() {
   }
 
   const today = new Date()
-  const months = Array.from({ length: 7 }, (_, offset) => { const d = new Date(today.getFullYear(), today.getMonth() + offset, 1); return { year: d.getFullYear(), month: d.getMonth() } })
+  const months = Array.from({ length: 13 }, (_, offset) => { const d = new Date(today.getFullYear(), today.getMonth() - 12 + offset, 1); return { year: d.getFullYear(), month: d.getMonth() } })
+  const currentMonthId = `month-${today.getFullYear()}-${today.getMonth()}`
+
+  useEffect(() => {
+    const currentMonth = document.getElementById(currentMonthId)
+    currentMonth?.scrollIntoView({ behavior: 'instant', block: 'start' })
+  }, [currentMonthId])
 
   return <div className="min-h-screen bg-zinc-950 text-zinc-100">
     <header className="sticky top-0 z-20 border-b border-zinc-800/80 bg-zinc-950/90 px-4 backdrop-blur md:px-8" style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 1rem)', paddingBottom: '1rem' }}>
@@ -68,7 +74,7 @@ function App() {
       {libraryState === 'error' && <div className="mb-5 rounded-2xl border border-red-400/30 bg-red-400/10 p-4 text-sm text-red-100">Galeri tidak dapat dibaca. Coba tutup dan buka kembali aplikasi.</div>}
       <div className="mb-3 grid grid-cols-7 gap-2 px-1 text-center text-[11px] font-medium uppercase tracking-wider text-zinc-600">{weekdayNames.map(day => <span key={day}>{day}</span>)}</div>
       <div className="space-y-10" style={{ contentVisibility: 'auto', containIntrinsicSize: '0 2400px' }}>
-        {months.map(({ year, month }) => <Month key={`${year}-${month}`} year={year} month={month} grouped={grouped} covers={covers} appearance={appearance} onSelectDate={setSelectedDate} onView={(photos, index) => setViewer({ photos, index })} />)}
+        {months.map(({ year, month }) => <Month key={`${year}-${month}`} id={`month-${year}-${month}`} year={year} month={month} grouped={grouped} covers={covers} appearance={appearance} onSelectDate={setSelectedDate} onView={(photos, index) => setViewer({ photos, index })} />)}
       </div>
     </main>
     {selectedDate && <DateSheet date={selectedDate} photos={grouped[selectedDate] ?? []} coverId={covers[selectedDate]} onClose={() => setSelectedDate(null)} onSetCover={setCover} onView={(photos, index) => { setSelectedDate(null); setViewer({ photos, index }) }} />}
@@ -77,9 +83,9 @@ function App() {
   </div>
 }
 
-function Month({ year, month, grouped, covers, appearance, onSelectDate, onView }: { year: number; month: number; grouped: Record<string, Photo[]>; covers: Record<string, string>; appearance: Appearance; onSelectDate: (date: string) => void; onView: (photos: Photo[], index: number) => void }) {
+function Month({ id, year, month, grouped, covers, appearance, onSelectDate, onView }: { id: string; year: number; month: number; grouped: Record<string, Photo[]>; covers: Record<string, string>; appearance: Appearance; onSelectDate: (date: string) => void; onView: (photos: Photo[], index: number) => void }) {
   const dates = gridDates(year, month)
-  return <section style={{ contentVisibility: 'auto', containIntrinsicSize: '0 520px' }}><div className="mb-3 flex items-center justify-between"><h3 className="text-lg font-medium">{monthNames[month]} <span className="text-zinc-600">{year}</span></h3><span className="text-xs text-zinc-600">{dates.filter(Boolean).length} hari</span></div><div className="grid grid-cols-7 gap-2">
+  return <section id={id} style={{ contentVisibility: 'auto', containIntrinsicSize: '0 520px', scrollMarginTop: '96px' }}><div className="mb-3 flex items-center justify-between"><h3 className="text-lg font-medium">{monthNames[month]} <span className="text-zinc-600">{year}</span></h3><span className="text-xs text-zinc-600">{dates.filter(Boolean).length} hari</span></div><div className="grid grid-cols-7 gap-2">
     {dates.map((day, index) => { if (!day) return <div key={`empty-${index}`} />; const key = dateKey(year, month, day); const photos = grouped[key] ?? []; return <DayCell key={key} day={day} photos={photos} coverId={covers[key]} appearance={appearance} onClick={() => photos.length && onSelectDate(key)} onView={onView} /> })}
   </div></section>
 }

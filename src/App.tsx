@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { CalendarDays, ChevronLeft, ChevronRight, Image, LoaderCircle, RotateCcw, Settings, SlidersHorizontal, X } from 'lucide-react'
 import { demoPhotos } from './data'
-import { isNative, PhotoLibrary } from './native'
+import { isNative, PhotoLibrary, toWebUri } from './native'
 import { DEFAULT_APPEARANCE, type Appearance, type LayoutMode, type Photo } from './types'
 import { loadAppearance, loadCovers, saveAppearance, saveCovers } from './storage'
 
@@ -32,7 +32,7 @@ function App() {
     const end = new Date(today.getFullYear(), today.getMonth() + 8, 0)
     PhotoLibrary.requestAccess()
       .then(access => access.granted ? PhotoLibrary.listPhotos({ startDate: isoDate(start), endDate: isoDate(end), limit: 500 }) : Promise.reject(new Error('permission-denied')))
-      .then(result => { setPhotos(result.photos); setLibraryState('ready') })
+      .then(result => { setPhotos(result.photos.map(photo => ({ ...photo, uri: toWebUri(photo.uri) }))); setLibraryState('ready') })
       .catch(error => setLibraryState(error instanceof Error && error.message === 'permission-denied' ? 'denied' : 'error'))
   }, [])
 

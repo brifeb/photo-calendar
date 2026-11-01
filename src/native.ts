@@ -10,3 +10,7 @@ export interface PhotoLibraryPlugin {
 
 export const PhotoLibrary = registerPlugin<PhotoLibraryPlugin>('PhotoLibrary')
 export const isNative = Capacitor.isNativePlatform()
+
+export function toWebUri(uri: string) {
+  return isNative && uri.startsWith('content://') ? Capacitor.convertFileSrc(uri) : uri
+}

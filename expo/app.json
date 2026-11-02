@@ -11,7 +11,7 @@
       "package": "com.brifeb.photocalendar.expo",
       "permissions": ["READ_MEDIA_IMAGES", "READ_MEDIA_VISUAL_USER_SELECTED", "READ_EXTERNAL_STORAGE"]
     },
-    "plugins": ["expo-media-library"],
+    "plugins": ["expo-media-library", "./plugins/withStandaloneDebug"],
     "experiments": { "typedRoutes": false }
   }
 }

@@ -39,6 +39,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -78,6 +79,7 @@ private fun PhotoCalendarApp() {
     var hasPermission by remember { mutableStateOf(false) }
     var selectedPhoto by remember { mutableStateOf<Photo?>(null) }
     var settingsOpen by remember { mutableStateOf(false) }
+    var showDateNumberOnPhoto by remember { mutableStateOf(context.getSharedPreferences("photo_calendar", Context.MODE_PRIVATE).getBoolean("show_date_number_on_photo", false)) }
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
         hasPermission = result.values.any { it }
         if (hasPermission) photos = queryPhotos(context)
@@ -91,11 +93,11 @@ private fun PhotoCalendarApp() {
             Column {
                 Header(onSettings = { settingsOpen = true })
                 if (!hasPermission) PermissionCard { permissionLauncher.launch(readPermissions()) }
-                else CalendarContent(photos = photos, onPhotoClick = { selectedPhoto = it })
+                else CalendarContent(photos = photos, showDateNumberOnPhoto = showDateNumberOnPhoto, onPhotoClick = { selectedPhoto = it })
             }
         }
         selectedPhoto?.let { PhotoDialog(photo = it, onDismiss = { selectedPhoto = null }) }
-        if (settingsOpen) SettingsDialog(onDismiss = { settingsOpen = false })
+        if (settingsOpen) SettingsDialog(showDateNumberOnPhoto = showDateNumberOnPhoto, onShowDateNumberChange = { enabled -> showDateNumberOnPhoto = enabled; context.getSharedPreferences("photo_calendar", Context.MODE_PRIVATE).edit().putBoolean("show_date_number_on_photo", enabled).apply() }, onDismiss = { settingsOpen = false })
     }
 }
 
@@ -118,7 +120,7 @@ private fun PermissionCard(onClick: () -> Unit) {
 }
 
 @Composable
-private fun CalendarContent(photos: List<Photo>, onPhotoClick: (Photo) -> Unit) {
+private fun CalendarContent(photos: List<Photo>, showDateNumberOnPhoto: Boolean, onPhotoClick: (Photo) -> Unit) {
     val grouped = photos.groupBy { it.date }
     val now = java.util.Calendar.getInstance()
     val months = (0..12).map { offset -> Month(now.get(java.util.Calendar.YEAR), now.get(java.util.Calendar.MONTH) - 12 + offset) }
@@ -127,12 +129,12 @@ private fun CalendarContent(photos: List<Photo>, onPhotoClick: (Photo) -> Unit) 
     Column {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) { Column { Text("Timeline", color = Color(0xFF71717A), fontSize = 13.sp); Text("Kalender foto", color = Color.White, fontSize = 24.sp) }; Text("${photos.size} foto", color = Color(0xFF71717A), fontSize = 12.sp) }
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.SpaceEvenly) { listOf("Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min").forEach { Text(it, color = Color(0xFF52525B), fontSize = 10.sp) } }
-        LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) { items(items = months, key = { "${it.year}-${it.month}" }, contentType = { "month" }) { month -> MonthRow(month, grouped, onPhotoClick) } }
+        LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) { items(items = months, key = { "${it.year}-${it.month}" }, contentType = { "month" }) { month -> MonthRow(month, grouped, showDateNumberOnPhoto, onPhotoClick) } }
     }
 }
 
 @Composable
-private fun MonthRow(month: Month, grouped: Map<String, List<Photo>>, onPhotoClick: (Photo) -> Unit) {
+private fun MonthRow(month: Month, grouped: Map<String, List<Photo>>, showDateNumberOnPhoto: Boolean, onPhotoClick: (Photo) -> Unit) {
     val calendar = java.util.Calendar.getInstance().apply { set(month.year, month.month, 1) }
     val days = calendar.getActualMaximum(java.util.Calendar.DAY_OF_MONTH)
     val start = (calendar.get(java.util.Calendar.DAY_OF_WEEK) + 5) % 7
@@ -148,7 +150,7 @@ private fun MonthRow(month: Month, grouped: Map<String, List<Photo>>, onPhotoCli
                     val photo = date?.let { grouped[it]?.firstOrNull() }
                     Box(Modifier.weight(1f).aspectRatio(1f).clip(RoundedCornerShape(8.dp)).background(Color(0xFF18181B)).then(if (photo != null) Modifier.clickable { onPhotoClick(photo) } else Modifier)) {
                         if (photo != null) AsyncImage(model = photo.uri, contentDescription = photo.name, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-                        if (day != null) Text(day.toString(), color = Color.White, modifier = Modifier.padding(5.dp).background(Color(0xB809090B), RoundedCornerShape(7.dp)).padding(horizontal = 7.dp, vertical = 4.dp), fontSize = 11.sp)
+                        if (day != null && (photo == null || showDateNumberOnPhoto)) Text(day.toString(), color = Color.White, modifier = Modifier.padding(5.dp).background(Color(0xB809090B), RoundedCornerShape(7.dp)).padding(horizontal = 7.dp, vertical = 4.dp), fontSize = 11.sp)
                     }
                 }
                 repeat(7 - week.size) { Spacer(Modifier.weight(1f)) }
@@ -164,8 +166,8 @@ private fun PhotoDialog(photo: Photo, onDismiss: () -> Unit) {
 }
 
 @Composable
-private fun SettingsDialog(onDismiss: () -> Unit) {
-    AlertDialog(onDismissRequest = onDismiss, title = { Text("Appearance Settings") }, text = { Text("Pengaturan tampilan kalender akan tersedia di panel ini. Tombol settings sekarang sudah merespons.") }, confirmButton = { TextButton(onClick = onDismiss) { Text("Tutup") } })
+private fun SettingsDialog(showDateNumberOnPhoto: Boolean, onShowDateNumberChange: (Boolean) -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(onDismissRequest = onDismiss, title = { Text("Appearance Settings") }, text = { Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) { Text("Tampilkan nomor tanggal pada foto", modifier = Modifier.weight(1f).padding(end = 12.dp)); Switch(checked = showDateNumberOnPhoto, onCheckedChange = onShowDateNumberChange) } }, confirmButton = { TextButton(onClick = onDismiss) { Text("Tutup") } })
 }
 
 private fun monthName(month: Int) = listOf("Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember")[(month + 12) % 12]

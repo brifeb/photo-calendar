@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.ContentUris
 import android.content.Context
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
@@ -24,12 +25,16 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -62,12 +67,28 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.exifinterface.media.ExifInterface
 import coil.compose.AsyncImage
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-data class Photo(val id: Long, val uri: String, val date: String, val name: String)
+data class Photo(
+    val id: Long,
+    val uri: String,
+    val date: String,
+    val name: String,
+    val dateTakenMillis: Long,
+    val width: Int,
+    val height: Int,
+    val sizeBytes: Long,
+    val mimeType: String,
+    val album: String,
+)
+data class PhotoMetadata(val values: List<Pair<String, String>>)
 data class Month(val year: Int, val month: Int)
 data class Appearance(
     val layout: String = "single",
@@ -88,32 +109,34 @@ private fun PhotoCalendarApp() {
     val context = LocalContext.current
     var photos by remember { mutableStateOf<List<Photo>>(emptyList()) }
     var hasPermission by remember { mutableStateOf(false) }
-    var selectedPhoto by remember { mutableStateOf<Photo?>(null) }
+    var selectedDatePhotos by remember { mutableStateOf<List<Photo>?>(null) }
     var settingsOpen by remember { mutableStateOf(false) }
     var appearance by remember { mutableStateOf(loadAppearance(context)) }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    fun refreshPhotos() { scope.launch { photos = withContext(Dispatchers.IO) { queryPhotos(context) } } }
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
         hasPermission = result.values.any { it }
-        if (hasPermission) photos = queryPhotos(context)
+        if (hasPermission) refreshPhotos()
     }
-    LaunchedEffect(Unit) { hasPermission = readPermissionGranted(context); if (hasPermission) photos = queryPhotos(context) }
+    LaunchedEffect(Unit) { hasPermission = readPermissionGranted(context); if (hasPermission) refreshPhotos() }
     fun updateAppearance(next: Appearance) { appearance = next; saveAppearance(context, next) }
     MaterialTheme(colorScheme = androidx.compose.material3.darkColorScheme(primary = Color(0xFFFBBF24), background = Color(0xFF09090B))) {
         Surface(modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing), color = Color(0xFF09090B)) {
             Column {
-                Header(onSettings = { settingsOpen = true })
+                Header(photoCount = photos.size, onSettings = { settingsOpen = true })
                 if (!hasPermission) PermissionCard { permissionLauncher.launch(readPermissions()) }
-                else CalendarContent(photos, appearance, onPhotoClick = { selectedPhoto = it })
+                else CalendarContent(photos, appearance, onDayClick = { selectedDatePhotos = it })
             }
         }
-        selectedPhoto?.let { PhotoDialog(it) { selectedPhoto = null } }
+        selectedDatePhotos?.let { DatePhotoDialog(it) { selectedDatePhotos = null } }
         if (settingsOpen) SettingsDialog(appearance, ::updateAppearance) { settingsOpen = false }
     }
 }
 
-@Composable private fun Header(onSettings: () -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(52.dp).clip(RoundedCornerShape(16.dp)).background(Color(0xFFFBBF24)), contentAlignment = Alignment.Center) { Text("▦", color = Color(0xFF09090B), fontSize = 28.sp) }
-        Column(Modifier.padding(start = 12.dp).weight(1f)) { Text("Photo Calendar", color = Color.White, fontSize = 19.sp); Text("Native gallery timeline", color = Color(0xFF71717A), fontSize = 12.sp) }
+@Composable private fun Header(photoCount: Int, onSettings: () -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(44.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFFFBBF24)), contentAlignment = Alignment.Center) { Text("▦", color = Color(0xFF09090B), fontSize = 24.sp) }
+        Column(Modifier.padding(start = 10.dp).weight(1f)) { Text("Photo Calendar", color = Color.White, fontSize = 18.sp); Text("$photoCount foto", color = Color(0xFF71717A), fontSize = 12.sp) }
         IconButton(onClick = onSettings) { Icon(Icons.Default.Settings, contentDescription = "Settings", tint = Color(0xFFA1A1AA)) }
     }
 }
@@ -122,23 +145,22 @@ private fun PhotoCalendarApp() {
     Column(Modifier.padding(16.dp).clip(RoundedCornerShape(20.dp)).background(Color(0xFF18181B)).padding(18.dp)) { Text("Akses foto diperlukan", color = Color.White, fontSize = 17.sp); Text("Pilih semua foto atau hanya foto tertentu untuk kalender.", color = Color(0xFFA1A1AA), modifier = Modifier.padding(top = 8.dp)); Button(onClick = onClick, modifier = Modifier.padding(top = 16.dp)) { Text("Izinkan akses foto") } }
 }
 
-@Composable private fun CalendarContent(photos: List<Photo>, appearance: Appearance, onPhotoClick: (Photo) -> Unit) {
-    val grouped = photos.groupBy { it.date }
+@Composable private fun CalendarContent(photos: List<Photo>, appearance: Appearance, onDayClick: (List<Photo>) -> Unit) {
+    val grouped = remember(photos) { photos.groupBy { it.date } }
     val now = java.util.Calendar.getInstance()
     val months = (0..12).map { offset -> Month(now.get(java.util.Calendar.YEAR), now.get(java.util.Calendar.MONTH) - 12 + offset) }
     val listState = rememberLazyListState()
     LaunchedEffect(months.size) { listState.scrollToItem(months.lastIndex) }
     Column {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) { Column { Text("Timeline", color = Color(0xFF71717A), fontSize = 13.sp); Text("Kalender foto", color = Color.White, fontSize = 24.sp) }; Text("${photos.size} foto", color = Color(0xFF71717A), fontSize = 12.sp) }
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.SpaceEvenly) { listOf("Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min").forEach { Text(it, color = Color(0xFF52525B), fontSize = 10.sp) } }
-        LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) { items(items = months, key = { "${it.year}-${it.month}" }, contentType = { "month" }) { MonthRow(it, grouped, appearance, onPhotoClick) } }
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.SpaceEvenly) { listOf("Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab").forEach { Text(it, color = Color(0xFF52525B), fontSize = 10.sp) } }
+        LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp), userScrollEnabled = true) { items(items = months, key = { "${it.year}-${it.month}" }, contentType = { "month" }) { MonthRow(it, grouped, appearance, onDayClick) } }
     }
 }
 
-@Composable private fun MonthRow(month: Month, grouped: Map<String, List<Photo>>, appearance: Appearance, onPhotoClick: (Photo) -> Unit) {
+@Composable private fun MonthRow(month: Month, grouped: Map<String, List<Photo>>, appearance: Appearance, onDayClick: (List<Photo>) -> Unit) {
     val calendar = java.util.Calendar.getInstance().apply { set(month.year, month.month, 1) }
     val days = calendar.getActualMaximum(java.util.Calendar.DAY_OF_MONTH)
-    val start = (calendar.get(java.util.Calendar.DAY_OF_WEEK) + 5) % 7
+    val start = calendar.get(java.util.Calendar.DAY_OF_WEEK) - 1
     val cells = List(start) { null } + (1..days).toList()
     val formatter = SimpleDateFormat("yyyy-MM-dd", Locale.US)
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
@@ -148,7 +170,7 @@ private fun PhotoCalendarApp() {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(appearance.gap.dp)) {
                 week.forEach { day ->
                     val date = day?.let { java.util.Calendar.getInstance().apply { set(month.year, month.month, it) }.time }?.let(formatter::format)
-                    DayCell(day, date?.let { grouped[it].orEmpty() }.orEmpty(), appearance, onPhotoClick, Modifier.weight(1f))
+                    DayCell(day, date?.let { grouped[it].orEmpty() }.orEmpty(), appearance, onDayClick, Modifier.weight(1f))
                 }
                 repeat(7 - week.size) { Spacer(Modifier.weight(1f)) }
             }
@@ -157,13 +179,15 @@ private fun PhotoCalendarApp() {
     }
 }
 
-@Composable private fun DayCell(day: Int?, photos: List<Photo>, appearance: Appearance, onPhotoClick: (Photo) -> Unit, modifier: Modifier) {
+@Composable private fun DayCell(day: Int?, photos: List<Photo>, appearance: Appearance, onDayClick: (List<Photo>) -> Unit, modifier: Modifier) {
     val ordered = when (appearance.coverMode) { "oldest" -> photos.reversed(); "random" -> photos.sortedBy { "${it.date}:${it.id}".hashCode() }; else -> photos }
     val visibleCount = when (appearance.layout) { "single" -> 1; else -> 4 }
-    val cellModifier = modifier.aspectRatio(1f / appearance.cellHeight).clip(RoundedCornerShape((appearance.radius * 0.48f).dp)).background(Color(0xFF18181B)).then(if (photos.isNotEmpty()) Modifier.clickable { onPhotoClick(ordered.first()) } else Modifier)
+    val cellModifier = modifier.aspectRatio(1f / appearance.cellHeight).clip(RoundedCornerShape((appearance.radius * 0.48f).dp)).background(Color(0xFF18181B)).then(if (photos.isNotEmpty()) Modifier.clickable { onDayClick(ordered) } else Modifier)
     Box(cellModifier) {
         val visible = ordered.take(visibleCount)
-        when (appearance.layout) {
+        if (visible.size == 1) {
+            visible.firstOrNull()?.let { PhotoImage(it, Modifier.fillMaxSize()) }
+        } else when (appearance.layout) {
             "grid" -> Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(1.dp)) { visible.chunked(2).forEach { row -> Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(1.dp)) { row.forEach { PhotoImage(it, Modifier.weight(1f).fillMaxHeight()) }; repeat(2 - row.size) { Spacer(Modifier.weight(1f)) } } } }
             "columns" -> Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(1.dp)) { visible.forEach { PhotoImage(it, Modifier.weight(1f).fillMaxHeight()) } }
             "rows" -> Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(1.dp)) { visible.forEach { PhotoImage(it, Modifier.weight(1f).fillMaxWidth()) } }
@@ -176,7 +200,46 @@ private fun PhotoCalendarApp() {
 
 @Composable private fun PhotoImage(photo: Photo, modifier: Modifier) { AsyncImage(model = photo.uri, contentDescription = photo.name, contentScale = ContentScale.Crop, modifier = modifier) }
 
-@Composable private fun PhotoDialog(photo: Photo, onDismiss: () -> Unit) { AlertDialog(onDismissRequest = onDismiss, title = { Text(photo.name) }, text = { Column { AsyncImage(model = photo.uri, contentDescription = photo.name, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxWidth().aspectRatio(1f)); Text(photo.date, modifier = Modifier.padding(top = 10.dp)) } }, confirmButton = { TextButton(onClick = onDismiss) { Text("Tutup") } }) }
+@Composable
+private fun DatePhotoDialog(photos: List<Photo>, onDismiss: () -> Unit) {
+    var selected by remember { mutableStateOf<Photo?>(null) }
+    if (selected != null) {
+        PhotoDetailDialog(selected!!, onDismiss = { selected = null })
+    } else {
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("${photos.firstOrNull()?.date ?: ""} · ${photos.size} foto") },
+            text = {
+                LazyVerticalGrid(columns = GridCells.Fixed(2), modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    gridItems(photos, key = { it.id }) { photo ->
+                        PhotoImage(photo, Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(10.dp)).clickable { selected = photo })
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = onDismiss) { Text("Tutup") } },
+        )
+    }
+}
+
+@Composable
+private fun PhotoDetailDialog(photo: Photo, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    var metadata by remember(photo.id) { mutableStateOf<PhotoMetadata?>(null) }
+    LaunchedEffect(photo.id) { metadata = withContext(Dispatchers.IO) { readPhotoMetadata(context, photo) } }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(photo.name, maxLines = 2) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                AsyncImage(model = photo.uri, contentDescription = photo.name, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxWidth().aspectRatio(1f))
+                Text("${photo.date} · ${photo.mimeType.ifBlank { "Foto" }}", color = Color(0xFFA1A1AA), modifier = Modifier.padding(top = 10.dp))
+                if (metadata == null) Text("Membaca metadata…", color = Color(0xFF71717A), modifier = Modifier.padding(top = 8.dp))
+                else metadata!!.values.forEach { (label, value) -> Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.SpaceBetween) { Text(label, color = Color(0xFF71717A)); Text(value, color = Color.White, modifier = Modifier.padding(start = 12.dp)) } }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Tutup") } },
+    )
+}
 
 @Composable private fun SettingsDialog(appearance: Appearance, onChange: (Appearance) -> Unit, onDismiss: () -> Unit) {
     val scroll = rememberScrollState()
@@ -202,4 +265,70 @@ private fun readPermissions() = if (Build.VERSION.SDK_INT >= 34) arrayOf(Manifes
 private fun readPermissionGranted(context: Context) = readPermissions().any { ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }
 private fun loadAppearance(context: Context): Appearance { val prefs = context.getSharedPreferences("photo_calendar", Context.MODE_PRIVATE); return Appearance(prefs.getString("layout", "single") ?: "single", prefs.getFloat("cell_height", 1f), prefs.getInt("gap", 4), prefs.getInt("radius", 12), prefs.getBoolean("show_badge", true), prefs.getString("cover_mode", "latest") ?: "latest", prefs.getBoolean("show_date_number_on_photo", false)) }
 private fun saveAppearance(context: Context, value: Appearance) { context.getSharedPreferences("photo_calendar", Context.MODE_PRIVATE).edit().putString("layout", value.layout).putFloat("cell_height", value.cellHeight).putInt("gap", value.gap).putInt("radius", value.radius).putBoolean("show_badge", value.showBadge).putString("cover_mode", value.coverMode).putBoolean("show_date_number_on_photo", value.showDateNumberOnPhoto).apply() }
-private fun queryPhotos(context: Context): List<Photo> { val result = mutableListOf<Photo>(); val projection = arrayOf(MediaStore.Images.Media._ID, MediaStore.Images.Media.DATE_TAKEN, MediaStore.Images.Media.DISPLAY_NAME); context.contentResolver.query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, projection, null, null, "${MediaStore.Images.Media.DATE_TAKEN} DESC")?.use { cursor -> while (cursor.moveToNext() && result.size < 1000) { val id = cursor.getLong(0); val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(cursor.getLong(1))); result += Photo(id, ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id).toString(), date, cursor.getString(2) ?: "Photo") } }; return result }
+private fun queryPhotos(context: Context): List<Photo> {
+    val result = mutableListOf<Photo>()
+    val projection = arrayOf(
+        MediaStore.Images.Media._ID,
+        MediaStore.Images.Media.DATE_TAKEN,
+        MediaStore.Images.Media.DISPLAY_NAME,
+        MediaStore.Images.Media.WIDTH,
+        MediaStore.Images.Media.HEIGHT,
+        MediaStore.Images.Media.SIZE,
+        MediaStore.Images.Media.MIME_TYPE,
+        MediaStore.Images.Media.BUCKET_DISPLAY_NAME,
+    )
+    context.contentResolver.query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, projection, null, null, "${MediaStore.Images.Media.DATE_TAKEN} DESC")?.use { cursor ->
+        val idIndex = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
+        while (cursor.moveToNext()) {
+            val id = cursor.getLong(idIndex)
+            val taken = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_TAKEN))
+            val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(taken))
+            result += Photo(
+                id = id,
+                uri = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id).toString(),
+                date = date,
+                name = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)) ?: "Photo",
+                dateTakenMillis = taken,
+                width = cursor.getInt(cursor.getColumnIndexOrThrow(MediaStore.Images.Media.WIDTH)),
+                height = cursor.getInt(cursor.getColumnIndexOrThrow(MediaStore.Images.Media.HEIGHT)),
+                sizeBytes = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Images.Media.SIZE)),
+                mimeType = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.Images.Media.MIME_TYPE)) ?: "",
+                album = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.Images.Media.BUCKET_DISPLAY_NAME)) ?: "",
+            )
+        }
+    }
+    return result
+}
+
+private fun readPhotoMetadata(context: Context, photo: Photo): PhotoMetadata {
+    val values = mutableListOf(
+        "Tanggal" to formatDateTime(photo.dateTakenMillis),
+        "Resolusi" to if (photo.width > 0 && photo.height > 0) "${photo.width} × ${photo.height}" else "Tidak tersedia",
+        "Ukuran" to formatBytes(photo.sizeBytes),
+        "Format" to photo.mimeType.ifBlank { "Tidak tersedia" },
+        "Album" to photo.album.ifBlank { "Tidak tersedia" },
+    )
+    runCatching {
+        context.contentResolver.openInputStream(Uri.parse(photo.uri))?.use { input ->
+            val exif = ExifInterface(input)
+            fun add(label: String, tag: String, transform: (String) -> String = { it }) {
+                exif.getAttribute(tag)?.takeIf { it.isNotBlank() }?.let { values += label to transform(it) }
+            }
+            add("Kamera", ExifInterface.TAG_MAKE) { make -> "${make.trim()} ${exif.getAttribute(ExifInterface.TAG_MODEL).orEmpty().trim()}".trim() }
+            add("Lensa", ExifInterface.TAG_LENS_MODEL)
+            add("ISO", ExifInterface.TAG_ISO_SPEED_RATINGS)
+            add("Aperture", ExifInterface.TAG_F_NUMBER)
+            add("Shutter speed", ExifInterface.TAG_EXPOSURE_TIME)
+            add("Focal length", ExifInterface.TAG_FOCAL_LENGTH)
+            add("GPS", ExifInterface.TAG_GPS_LATITUDE) { "Tersedia" }
+        }
+    }
+    return PhotoMetadata(values.distinctBy { it.first })
+}
+
+private fun formatDateTime(millis: Long): String = SimpleDateFormat("dd MMM yyyy, HH:mm", Locale.getDefault()).format(Date(millis))
+private fun formatBytes(bytes: Long): String = when {
+    bytes >= 1024 * 1024 -> String.format(Locale.getDefault(), "%.1f MB", bytes / (1024f * 1024f))
+    bytes >= 1024 -> String.format(Locale.getDefault(), "%.0f KB", bytes / 1024f)
+    else -> "$bytes B"
+}

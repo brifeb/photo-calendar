@@ -4,5 +4,6 @@ dist/
 android/.gradle/
 android/local.properties
 android/**/build/
+native-android/**/build/
 *.iml
 .idea/
